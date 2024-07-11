@@ -5,17 +5,20 @@ namespace App\Http\Controllers\v1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
-use App\Models\User;
-use Carbon\Carbon;
-use Illuminate\Contracts\Auth\Authenticatable;
+use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
+    protected AuthService $authService;
+
+    public function __construct(AuthService $authService)
+    {
+        $this->authService = $authService;
+    }
+
     /**
-     * Register api
+     * Register API
      *
      * @param RegisterRequest $request
      * @return JsonResponse
@@ -23,49 +26,29 @@ class AuthController extends Controller
     public function register(RegisterRequest $request): JsonResponse
     {
         $input = $request->validated();
+        $result = $this->authService->register($input);
 
-        $input['password'] = Hash::make($input['password']);
-
-        $user = User::create($input);
-//Todo add local carts
-        $success['token'] = $this->createToken($user);
-        $success['name'] = $user->name;
-
-        return response()->json($success);
+        return response()->json($result);
     }
 
     /**
-     * Login api
+     * Login API
      *
      * @param LoginRequest $request
      * @return JsonResponse
      */
     public function login(LoginRequest $request): JsonResponse
     {
-        if (Auth::attempt(['email' => $request->email, 'password' => $request->password])) {
-            $user = Auth::user();
+        $credentials = $request->only('email', 'password');
+        $result = $this->authService->login($credentials);
 
-            $success['token'] = $this->createToken($user);
-            $success['name'] = $user->name;
-//Todo add local carts
+        if (!empty($result)) {
             return response()->json([
-                'data'    => $success,
-                'message' => 'Successfully Logged in'
+                'data'    => $result,
+                'message' => 'Successfully logged in'
             ]);
-
-        } else {
-            return response()->json(['message' => 'Cannot login due to an unknown error'], 500);
         }
-    }
 
-    private function createToken(User|Authenticatable|null $user)
-    {
-        $user->tokens()->delete();
-
-        return $user->createToken(
-            $user->email . '_' . Carbon::now(),
-            ['*'],
-            Carbon::now()->addDays(6)
-        )->plainTextToken;
+        return response()->json(['message' => 'Invalid credentials'], 401);
     }
 }

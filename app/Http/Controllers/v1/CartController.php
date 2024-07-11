@@ -6,60 +6,55 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CartStoreRequest;
 use App\Http\Requests\CartUpdateRequest;
 use App\Models\Cart;
-use App\Models\Product;
+use App\Services\CartService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class CartController extends Controller
 {
+    protected CartService $cartService;
+
+    public function __construct(CartService $cartService)
+    {
+        $this->cartService = $cartService;
+    }
+
     public function index()
     {
-        $cartItems = Cart::where('user_id', Auth::id())->with('product')->get();
-        return response()->json($cartItems);
+        $cartItems = $this->cartService->getCartItems();
+        $totalAmount = $this->cartService->calculateTotalAmount($cartItems);
+
+        return response()->json(['cart_items' => $cartItems, 'total_amount' => $totalAmount]);
     }
 
     public function store(CartStoreRequest $request)
     {
-        $product = Product::find($request->product_id);
+        $result = $this->cartService->addToCart($request->product_id, $request->quantity);
 
-        if ($product->quantity < $request->quantity) {
-            return response()->json(['message' => 'Not enough quantity available'], 400);
+        if (!$result['success']) {
+            return response()->json(['message' => $result['message']], 400);
         }
 
-        $cartItem = Cart::firstOrNew(
-            ['user_id' => Auth::id(), 'product_id' => $request['product_id']]
-        );
-        $cartItem->quantity += $request['quantity'];
-        $cartItem->save();
-
-        return response()->json($cartItem, 201);
+        return response()->json($result['cartItem'], 201);
     }
 
     public function update(CartUpdateRequest $request, Cart $cart)
     {
-        if ($cart->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $result = $this->cartService->updateCartItemQuantity($cart, $request->quantity);
+
+        if (!$result['success']) {
+            return response()->json(['message' => $result['message']], 400);
         }
 
-        $product = Product::find($cart->product_id);
-
-        if ($product->quantity < $request->quantity) {
-            return response()->json(['message' => 'Not enough quantity available'], 400);
-        }
-
-        $cart->quantity = $request->quantity;
-        $cart->save();
-
-        return response()->json($cart);
+        return response()->json($result['cartItem']);
     }
 
     public function destroy(Cart $cart)
     {
-        if ($cart->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $result = $this->cartService->removeFromCart($cart);
 
-        $cart->delete();
+        if (!$result['success']) {
+            return response()->json(['message' => $result['message']], 403);
+        }
 
         return response()->json(null, 204);
     }
@@ -67,22 +62,23 @@ class CartController extends Controller
     public function mergeCart(Request $request)
     {
         $localCart = $request->input('cart', []);
+        $result = $this->cartService->mergeLocalCart($localCart);
 
-        foreach ($localCart as $item) {
-            $cartItem = Cart::firstOrNew(
-                ['user_id' => Auth::id(), 'product_id' => $item['product_id']]
-            );
-            $cartItem->quantity += $item['quantity'];
-            $cartItem->save();
+        if (!$result['success']) {
+            return response()->json(['message' => $result['message'], 'errors' => $result['errors']], 400);
         }
 
-        return response()->json(['message' => 'Cart merged successfully']);
+        return response()->json(['message' => $result['message']]);
     }
 
     public function clearCart()
     {
-        Cart::where('user_id', Auth::id())->delete();
+        $result = $this->cartService->clearCart();
 
-        return response()->json(['message' => 'Cart cleared successfully']);
+        if (!$result['success']) {
+            return response()->json(['message' => 'Failed to clear cart'], 500);
+        }
+
+        return response()->json(['message' => $result['message']]);
     }
 }
